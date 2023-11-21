@@ -1,3 +1,10 @@
+import os
+
+# needs to appear before `from numba import cuda`
+os.environ["NUMBA_ENABLE_CUDASIM"] = "1"
+# set to "1" for more debugging, but slower performance
+os.environ["NUMBA_CUDA_DEBUGINFO"] = "1"
+
 from numba import cuda
 import numba
 
@@ -10,10 +17,10 @@ import time
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
 
-NUM_ROWS = 2
-NUM_ITERATIONS = 3
+NUM_ROWS = 1
+NUM_ITERATIONS = 2
 TEST_ITERATIONS = 1
-LINE_SIZE = 100
+LINE_SIZE = 20
 NUM_CLUSTERS = 3
 MAX_INPUT_VALUE = 100
 NUM_SEEDS = 32
@@ -217,7 +224,7 @@ def get_random_index(input, rng_states):
     random_index = -1
 
     # Generate a random float in the range [0, 1)
-    rand = cuda.random.xoroshiro128p_uniform_float32(rng_states, seed * row)
+    rand = 1 #cuda.random.xoroshiro128p_uniform_float32(rng_states, seed * row)
 
     # Transform the float to an int in the range of the row length
     random_index = int(rand * row_length)
@@ -375,6 +382,9 @@ def cuda_kmeans(input, output_labels, output_centroids, rng_states):
     row = cuda.blockIdx.x
     seed = cuda.threadIdx.x
 
+    if row == 1 and seed == 1:
+        from pdb import set_trace; set_trace()
+
     # Shared memory should only run once per block, 2d arrays have shape NUM ROWS x NUM COLS
     shared_input = cuda.shared.array(shape=(LINE_SIZE,), dtype=np.float32)
     shared_error = cuda.shared.array(shape=(NUM_SEEDS,), dtype=np.float32)
@@ -460,16 +470,16 @@ def test_new_kmeans(input_data, new_code_stats, rng_states, printouts=True):
 
         # SKLEARN KMEANS
         ari_array = []
-        for i in range(NUM_ROWS):
-            if i > 5:
-                break
-            output1 = KMeans(n_clusters=3, random_state=0, n_init="auto").fit((input_data[i]).reshape(-1, 1))
-            output2 = KMeans(n_clusters=3, random_state=0, n_init="auto").fit((input_data[i]).reshape(-1, 1))
-            sklearn_output_centroids1 = np.sort(output1.cluster_centers_.flatten())
-            error_array = np.linalg.norm(
-                np.array(centroids_arr[i:i + 1, :].flatten()) - np.array(sklearn_output_centroids1))
-            print(
-                f"SKLearn kmeans row {i}: {sklearn_output_centroids1},  {centroids_arr[i:i + 1, :].flatten()}, {error_array}")
+        #for i in range(NUM_ROWS):
+        #    if i > 5:
+        #        break
+        #    output1 = KMeans(n_clusters=3, random_state=0, n_init="auto").fit((input_data[i]).reshape(-1, 1))
+        #    output2 = KMeans(n_clusters=3, random_state=0, n_init="auto").fit((input_data[i]).reshape(-1, 1))
+        #    sklearn_output_centroids1 = np.sort(output1.cluster_centers_.flatten())
+        #    error_array = np.linalg.norm(
+        #        np.array(centroids_arr[i:i + 1, :].flatten()) - np.array(sklearn_output_centroids1))
+        #    print(
+        #        f"SKLearn kmeans row {i}: {sklearn_output_centroids1},  {centroids_arr[i:i + 1, :].flatten()}, {error_array}")
 
     except Exception as e:
         print("An error occurred:", str(e))
@@ -485,7 +495,7 @@ if __name__ == "__main__":
 
     new_code_stats = TimingStats()
     # Create an array of RNG states
-    rng_states = cuda.random.create_xoroshiro128p_states(LINE_SIZE, seed=0)
+    rng_states = [[1],[2]]# cuda.random.create_xoroshiro128p_states(LINE_SIZE, seed=0)
 
     for test_iteration in range(TEST_ITERATIONS):
         # Generate some fake input data
