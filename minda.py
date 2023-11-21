@@ -1,9 +1,9 @@
 import os
 
-os.environ["NUMBA_ENABLE_CUDASIM"] = "1" # needs to appear before `from numba import cuda`
-os.environ["NUMBA_CUDA_DEBUGINFO"] = "1" # set to "1" for more debugging, but slower performance
+# os.environ["NUMBA_ENABLE_CUDASIM"] = "1" # needs to appear before `from numba import cuda`
+# os.environ["NUMBA_CUDA_DEBUGINFO"] = "1" # set to "1" for more debugging, but slower performance
 
-from numba import cuda
+from numba import cuda, int32
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
 import math
@@ -639,13 +639,20 @@ def get_random_index(input, rng_states):
   max_index = input.shape[0] - 1
   random_index = int(LINE_SIZE/2)
 
+  #rand_scaled = (seed * row) % max_index
+  #random_index = int(rand_scaled)
+  #random_index = min(max(rand_scaled, 0), max_index)
 
+  # if row == 1 and seed == 1:
+  #  from pdb import set_trace
+  #  set_trace()
   #Generate a random float in the range [0, 1)
-  rand = xoroshiro128p_uniform_float32(rng_states, seed)
+  #rand = xoroshiro128p_uniform_float32(rng_states, seed)
 
-  rand_scaled = int(max_index * rand)
-  #rand_indx = min(max(rand_scaled, 0), max_index)
+  #rand_scaled = int(max_index * rand)
+
   #random_index = rand_indx
+  #print("Random Index: ", random_index)
   return random_index
 
 @cuda.jit(device=True)
@@ -761,6 +768,14 @@ def get_initial_centroids(row_data, seed_centroids, rng_states):
 
   #select a first centroid from the row data at random
   first_centroid_index = get_random_index(row_data, rng_states)
+  comp = (row * seed) % (row_length - 1)
+  first_centroid_index = int32(comp)
+  print("first_centroid_index: ", first_centroid_index)
+  cuda.syncthreads()
+
+  # if row == 1 and seed == 1:
+  #  from pdb import set_trace
+  #  set_trace()
 
   #get the furthest distance from the random centroid for remaining centroids
   for centroid_index in range(centroids_length):
@@ -1110,9 +1125,9 @@ if __name__ == "__main__":
 
   new_code_stats = TimingStats()
   # Create an array of RNG states
-  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS*3, seed=1)
+  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS, seed=1)
 
-  print("random numbers. ", rng_states)
+  #print("random numbers. ", rng_states)
 
   for test_iteration in range(TEST_ITERATIONS):
 
