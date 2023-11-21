@@ -1,17 +1,16 @@
 import os
 
-# needs to appear before `from numba import cuda`
-os.environ["NUMBA_ENABLE_CUDASIM"] = "1"
-# set to "1" for more debugging, but slower performance
-os.environ["NUMBA_CUDA_DEBUGINFO"] = "1"
+os.environ["NUMBA_ENABLE_CUDASIM"] = "1" # needs to appear before `from numba import cuda`
+os.environ["NUMBA_CUDA_DEBUGINFO"] = "1" # set to "1" for more debugging, but slower performance
 
 from numba import cuda
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
 import math
 import time
+import random
 
-NUM_ROWS = 100000
+NUM_ROWS = 1000
 NUM_ITERATIONS = 100
 TEST_ITERATIONS = 10
 LINE_SIZE = 100
@@ -637,18 +636,16 @@ def find_min(centroids):
 def get_random_index(input, rng_states):
   seed = cuda.threadIdx.x
   row = cuda.blockIdx.x
-  row_length = input.shape[0] - 1
+  max_index = input.shape[0] - 1
   random_index = int(LINE_SIZE/2)
 
 
-  # Generate a random float in the range [0, 1)
+  #Generate a random float in the range [0, 1)
   rand = xoroshiro128p_uniform_float32(rng_states, seed)
-  #print("Random Number: ", rand)
 
-  # Transform the float to an int in the range of the row length
-  random_index = int(rand * row_length)
-  #print("Random Index: ", random_index)
-
+  rand_scaled = int(max_index * rand)
+  #rand_indx = min(max(rand_scaled, 0), max_index)
+  #random_index = rand_indx
   return random_index
 
 @cuda.jit(device=True)
@@ -1113,7 +1110,7 @@ if __name__ == "__main__":
 
   new_code_stats = TimingStats()
   # Create an array of RNG states
-  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS*LINE_SIZE, seed=1)
+  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS*3, seed=1)
 
   print("random numbers. ", rng_states)
 
