@@ -11,14 +11,14 @@ import time
 from random import randint
 from pdb import set_trace
 
-NUM_ROWS = 5
-NUM_ITERATIONS = 100
-TEST_ITERATIONS = 1
-LINE_SIZE = 100
+NUM_ROWS = 10
+NUM_ITERATIONS = 12
+TEST_ITERATIONS = 2
+LINE_SIZE = 12
 NUM_CLUSTERS = 5
 MAX_INPUT_VALUE = 100
 NUM_SEEDS = 32
-EPSILON_PERCENT = 0.002
+EPSILON_PERCENT = 0.02
 
 class TimingStats:
   def __init__(self):
@@ -636,7 +636,7 @@ def find_min(centroids):
   return res
 
 @cuda.jit(device=True)
-def get_random_index(input, rng_states):
+def get_random_index(input, shared_offset, rng_states):
   #Creating array indexing out of random numbers just did not want to happen on GPU,
   # So I passed in an array containing a randomly generated sequence
 
@@ -645,20 +645,44 @@ def get_random_index(input, rng_states):
   max_index = input.shape[0] - 1
   random_index = int(LINE_SIZE/2)
   rand = 0
+  # y = seed.y
+  #threads_code = x + (y << 16)
 
-  if (seed <= rng_states.shape[0]):
-     rand = rng_states[seed]# < max_index:
+  #get a random index by seed
+  num_spaces = int(math.floor(max_index / NUM_SEEDS))
+
+  if shared_offset[0] != 0:
+    while shared_offset[0] < cuda.threadIdx.x:
+      pass
+  offset = shared_offset[0]
+
+  print("thread index: ", seed)
 
 
+  #print("offset: ", offset)
+  #print("RNG state for seed: ", rng_states[seed])
+  #random_index = (max_index % num_spaces) + seed
+  cuda.atomic.add(shared_offset, 0, 1)
 
-  # i = 0
-  # for i in range(seed):
-  #   i += 1
-  # print("seed: ", i)
 
-  if rand < max_index:
-    #random_index = rng_states[seed] #int(rng_states[seed])
-    pass
+  #print("shared_offset: ", shared_offset[0])
+
+  if row == 1 and seed == 1:
+
+    print("number of spaces: ", num_spaces)
+  #   from pdb import set_trace
+  #   set_trace()
+
+  #cuda.syncthreads()
+  #random_index = (max_index % num_spaces)
+
+  # Attempt to pass a value from the CPU:
+  # if (seed <= rng_states.shape[0]):
+  #    rand = rng_states[seed]# < max_index:
+  #
+  # if rand < max_index:
+  #   #random_index = rng_states[seed] #int(rng_states[seed])
+  #   pass
     #if row == 1 and seed == 1:
       #from pdb import set_trace
       #set_trace()
@@ -666,15 +690,6 @@ def get_random_index(input, rng_states):
       #print("rand: ", rand)
       #print("type of rand: ", type(rand))
       #print("random_index: ", random_index)
-
-      #print("type of random_index: ", type(random_index))
-  #     #random_index = i
-  #      random_index = (LINE_SIZE % LINE_SIZE)
-
-  # if row == 1 and seed == 1:
-  #   print("random index: ", random_index)
-  #   from pdb import set_trace
-  #   set_trace()
 
   return random_index
 
@@ -784,30 +799,42 @@ def abs_sub(val1, val2):
   return abs(val1-val2)
 
 @cuda.jit(device=True)
-def get_initial_centroids(row_data, seed_centroids, rng_states):
+def get_initial_centroids(row_data, seed_centroids, shared_offset, rng_states):
   #remember, seed_centroids is of size [NUM_CLUSTERS]
   row = cuda.blockIdx.x
   seed = cuda.threadIdx.x
 
   #check further references to shape will be in-bounds
-  if row_data.ndim < 1 or seed_centroids.ndim < 1:
-    print("line 778 - row_data.ndim < 1 or seed_centroids.ndim < 1")
-    return
+  # if row_data.ndim < 1 or seed_centroids.ndim < 1:
+  #   print("line 778 - row_data.ndim < 1 or seed_centroids.ndim < 1")
+  #   return
 
   row_length = row_data.shape[0]
   centroids_length = seed_centroids.shape[0]
 
-  #select a first centroid from the row data at random
-  first_centroid_index = get_random_index(row_data, rng_states)
+  cuda.atomic.add(shared_offset, 0, 1)
 
-  #cuda.syncthreads()
+  while shared_offset[0] < cuda.threadIdx.x:
+    pass
+
+  if (seed == 0):
+    for i in range(seed_centroids.shape[0]):
+      rand_index = rng_states[i]
+      #print("index:", i, "rand index:", rand_index)
+      seed_centroids[i] = row_data[rand_index]
+
+  #select a first centroid from the row data at random
+  #first_centroid_index = get_random_index(row_data, shared_offset, rng_states)
 
   #get the furthest distance from the random centroid for remaining centroids
   for centroid_index in range(centroids_length):
     centroid = seed_centroids[centroid_index]
+    centroid = seed_centroids[centroid_index]
 
     if centroid_index == 0: #assign first centroid using random index
-      seed_centroids[centroid_index] = row_data[first_centroid_index]
+      pass
+      #seed_centroids[centroid_index] = row_data[first_centroid_index]
+      #cuda.syncthreads()
       #seed_centroids[centroid_index] = 0  #rng_states[seed]
     else: #find furthest centroid
       largest_smallest_distance(row_data, seed_centroids, centroid_index)
@@ -907,7 +934,7 @@ def get_centroids(row_data, labels, centroids):
 #   return sse
 
 @cuda.jit(device=True)
-def kmeans(input, output_labels, output_centroids, rng_states): # these are already shared memory and a single row for each
+def kmeans(input, output_labels, output_centroids, shared_offset, rng_states): # these are already shared memory and a single row for each
   row = cuda.blockIdx.x
   seed = cuda.threadIdx.x
 
@@ -919,7 +946,7 @@ def kmeans(input, output_labels, output_centroids, rng_states): # these are alre
   # print("row=", row, " seed=", seed)
   # print("centroids at start: ", output_centroids)
   # print("labels at start: ", output_labels)
-  get_initial_centroids(input, output_centroids, rng_states)
+  get_initial_centroids(input, output_centroids, shared_offset, rng_states)
 
   sort_centroids(output_centroids)
 
@@ -964,12 +991,13 @@ def cuda_kmeans(input, output_labels, output_centroids, rng_states):
   shared_error = cuda.shared.array(shape=(NUM_SEEDS,), dtype=np.float32)
   shared_centroids = cuda.shared.array(shape=(NUM_SEEDS, NUM_CLUSTERS), dtype=np.float32)
   shared_labels = cuda.shared.array(shape=(NUM_SEEDS, LINE_SIZE), dtype=np.int32)
+  shared_offset = cuda.shared.array(shape=(1,), dtype=np.int32)
 
   #Copy row data into shared memory
   fill_row(input[row], shared_input)
 
   #Run kmeans to convergence on row and seed
-  kmeans(shared_input, shared_labels[seed], shared_centroids[seed], rng_states)
+  kmeans(shared_input, shared_labels[seed], shared_centroids[seed], shared_offset, rng_states)
 
   #TODO: add error calculation back in
   #calc_error(shared_input, output_centroids, shared_error, output_labels)
@@ -1183,7 +1211,7 @@ if __name__ == "__main__":
 
     rng_states = np.zeros((NUM_SEEDS,), dtype=np.int64)
     for seed_index in range(rng_states.shape[0] - 1):
-      temp_index = randint(0, NUM_SEEDS - 1)
+      temp_index = randint(0, LINE_SIZE - 1) #generate a random index on line
       rng_states[seed_index] = temp_index
 
     print("Randomly generated indices:  ", rng_states)
