@@ -8,7 +8,7 @@ from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform
 import numpy as np
 import math
 import time
-import random
+from random import randint
 
 NUM_ROWS = 1000
 NUM_ITERATIONS = 100
@@ -634,25 +634,40 @@ def find_min(centroids):
 
 @cuda.jit(device=True)
 def get_random_index(input, rng_states):
+  #Creating array indexing out of random numbers just did not want to happen on GPU,
+  # So I passed in an array containing a randomly generated sequence
+
   seed = cuda.threadIdx.x
   row = cuda.blockIdx.x
-  max_index = input.shape[0] - 1
-  random_index = int(LINE_SIZE/2)
+  #max_index = input.shape[0] - 1
+  #random_index = int(LINE_SIZE/2)
+
+  random_index = rng_states[seed]
+  #
 
   #rand_scaled = (seed * row) % max_index
   #random_index = int(rand_scaled)
   #random_index = min(max(rand_scaled, 0), max_index)
 
   # if row == 1 and seed == 1:
-  #  from pdb import set_trace
-  #  set_trace()
+  #   print("random index: ", random_index)
+  #   from pdb import set_trace
+  #   set_trace()
+
   #Generate a random float in the range [0, 1)
   #rand = xoroshiro128p_uniform_float32(rng_states, seed)
 
-  #rand_scaled = int(max_index * rand)
+  #rand_scaled = max_index * rand
+
+  #private_array = cuda.shared.array(shape=(1,), dtype=np.int32)
+  #private_array[0] = rand_scaled
+  #random_index = private_array[0]
+  #print("Random Index: ", random_index)
+
+  #private_array = np.empty(32, dtype=np.float32)
 
   #random_index = rand_indx
-  #print("Random Index: ", random_index)
+
   return random_index
 
 @cuda.jit(device=True)
@@ -768,10 +783,14 @@ def get_initial_centroids(row_data, seed_centroids, rng_states):
 
   #select a first centroid from the row data at random
   first_centroid_index = get_random_index(row_data, rng_states)
-  comp = (row * seed) % (row_length - 1)
-  first_centroid_index = int32(comp)
-  print("first_centroid_index: ", first_centroid_index)
-  cuda.syncthreads()
+  #comp = (row * seed) % (row_length - 1)
+  #first_centroid_index = int32(comp)
+  #print("first_centroid_index: ", first_centroid_index)
+  #print(" with type=", type(first_centroid_index))
+
+  #cuda.syncthreads()
+  #rand = xoroshiro128p_uniform_float32(rng_states, seed)
+  #print("Rand: ", rand)
 
   # if row == 1 and seed == 1:
   #  from pdb import set_trace
@@ -1097,10 +1116,11 @@ def test_new_kmeans(input_data, new_code_stats, rng_states, printouts=True):
       device_centroids = cuda.to_device(centroids_array.copy())
       input_rows = cuda.to_device(input_data.copy())
       output_labels = cuda.to_device(labels_array.copy())
+      rng_device = cuda.to_device(np.array(rng_states, dtype=np.int32))
 
       # number of rows, number of seeds
       start = time.time()
-      cuda_kmeans[(NUM_ROWS, NUM_SEEDS)](input_rows, output_labels, device_centroids, rng_states)
+      cuda_kmeans[(NUM_ROWS, NUM_SEEDS)](input_rows, output_labels, device_centroids, rng_device)
       cuda.synchronize()
       end = time.time()
       new_code_stats.add_runtime(end - start)
@@ -1125,9 +1145,15 @@ if __name__ == "__main__":
 
   new_code_stats = TimingStats()
   # Create an array of RNG states
-  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS, seed=1)
+  #rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS, seed=1)
 
-  #print("random numbers. ", rng_states)
+  #centroids_array = np.zeros((input_data.shape[0], NUM_CLUSTERS), dtype=np.float32)
+  rng_states = np.zeros((NUM_SEEDS,), dtype=np.int32)
+  for seed_index in range(NUM_SEEDS-1):
+    rng_states[seed_index] = randint(0, NUM_SEEDS-1)
+
+
+  print("random indicies. ", rng_states)
 
   for test_iteration in range(TEST_ITERATIONS):
 
