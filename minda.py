@@ -1,24 +1,24 @@
 import os
-#TODO: tanya's comment put these two lines at the beginning of the file
-# os.environ["NUMBA_ENABLE_CUDASIM"] = "1" # needs to appear before `from numba import cuda`
-# os.environ["NUMBA_CUDA_DEBUGINFO"] = "1" # set to "1" for more debugging, but slower performance
 
-from numba import cuda, int32, int64
+# needs to appear before `from numba import cuda`
+# os.environ["NUMBA_ENABLE_CUDASIM"] = "1"
+# set to "1" for more debugging, but slower performance
+# os.environ["NUMBA_CUDA_DEBUGINFO"] = "1"
+
+from numba import cuda
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
 import math
 import time
-from random import randint
-from pdb import set_trace
 
-NUM_ROWS = 10
-NUM_ITERATIONS = 12
-TEST_ITERATIONS = 2
-LINE_SIZE = 12
-NUM_CLUSTERS = 5
+NUM_ROWS = 100000
+NUM_ITERATIONS = 100
+TEST_ITERATIONS = 10
+LINE_SIZE = 100
+NUM_CLUSTERS = 3
 MAX_INPUT_VALUE = 100
 NUM_SEEDS = 32
-EPSILON_PERCENT = 0.02
+EPSILON_PERCENT = 0.002
 
 class TimingStats:
   def __init__(self):
@@ -124,8 +124,6 @@ def test_get_labels(labels, row_data, centroids):
 def test_fill_row(row_data, empty_array_device):
   shared_input = cuda.shared.array(shape=(LINE_SIZE), dtype=np.float32)
   fill_row(row_data, shared_input)
-  # TODO: tanya's q: why are we only assigning to empty_array_device at index 0?
-  # Answer: this was just a test case and this was a means to transfer data on and off GPU
   for x in range(LINE_SIZE):
     empty_array_device[0][x] = shared_input[x]
 
@@ -568,8 +566,8 @@ def test_fill_row(row_data, empty_array_device):
   row_data_length = row_data.shape[1]
   shared_input = cuda.shared.array(shape=(LINE_SIZE,), dtype=np.float32)
   #print("GPU test row =", row)
-  #TODO this is how you debug
-  # if row == 0: <- put some useful if statement here
+  # if row == 0:
+  #   from pdb import set_trace
   #   set_trace()
   fill_row(row_data[row], shared_input)
   for x in range(0, row_data_length-1):
@@ -636,60 +634,18 @@ def find_min(centroids):
   return res
 
 @cuda.jit(device=True)
-def get_random_index(input, shared_offset, rng_states):
-  #Creating array indexing out of random numbers just did not want to happen on GPU,
-  # So I passed in an array containing a randomly generated sequence
-
+def get_random_index(input, rng_states):
   seed = cuda.threadIdx.x
   row = cuda.blockIdx.x
-  max_index = input.shape[0] - 1
+  row_length = input.shape[0]
   random_index = int(LINE_SIZE/2)
-  rand = 0
-  # y = seed.y
-  #threads_code = x + (y << 16)
-
-  #get a random index by seed
-  num_spaces = int(math.floor(max_index / NUM_SEEDS))
-
-  if shared_offset[0] != 0:
-    while shared_offset[0] < cuda.threadIdx.x:
-      pass
-  offset = shared_offset[0]
-
-  print("thread index: ", seed)
 
 
-  #print("offset: ", offset)
-  #print("RNG state for seed: ", rng_states[seed])
-  #random_index = (max_index % num_spaces) + seed
-  cuda.atomic.add(shared_offset, 0, 1)
+  # Generate a random float in the range [0, 1)
+  rand =  random_index#xoroshiro128p_uniform_float32(rng_states, seed)
 
-
-  #print("shared_offset: ", shared_offset[0])
-
-  if row == 1 and seed == 1:
-
-    print("number of spaces: ", num_spaces)
-  #   from pdb import set_trace
-  #   set_trace()
-
-  #cuda.syncthreads()
-  #random_index = (max_index % num_spaces)
-
-  # Attempt to pass a value from the CPU:
-  # if (seed <= rng_states.shape[0]):
-  #    rand = rng_states[seed]# < max_index:
-  #
-  # if rand < max_index:
-  #   #random_index = rng_states[seed] #int(rng_states[seed])
-  #   pass
-    #if row == 1 and seed == 1:
-      #from pdb import set_trace
-      #set_trace()
-      #random_index = rng_states[seed]  # int(rng_states[seed])
-      #print("rand: ", rand)
-      #print("type of rand: ", type(rand))
-      #print("random_index: ", random_index)
+  # Transform the float to an int in the range of the row length
+  #random_index = int(rand * row_length)
 
   return random_index
 
@@ -697,8 +653,7 @@ def get_random_index(input, shared_offset, rng_states):
 def find_yard_stick(centroids):
 
   min = MAX_INPUT_VALUE
-  prev_centroid = None # yard_stick
-  # yard_stick = prev_centroid
+  yard_stick = prev_centroid = None
 
   #first centroid
   if len(centroids) > 0:
@@ -706,11 +661,10 @@ def find_yard_stick(centroids):
 
   #compare remaining centroids
   for centroid in centroids[1:]:
-    distance = abs(centroid - prev_centroid) #TODO: tanya's edit: changed subtract to abs of difference
+    distance = centroid - prev_centroid
     if distance < min:
       min = distance
-      prev_centroid = centroid
-      #TODO: tanya's edit: indented prev_centroid reassignment because it looked wrong outside the if clause
+    prev_centroid = centroid
 
   yard_stick = min
   return yard_stick #return a float
@@ -719,8 +673,7 @@ def find_yard_stick(centroids):
 def all_same(input, output_labels, output_centroids):
   row = cuda.blockIdx.x
   seed = cuda.threadIdx.x
-  #TODO: tanya's q: why is this hard coded to return True?
-  # answer: it never got implemented
+
   return True #return a boolean
 
 
@@ -730,7 +683,6 @@ def sort_centroids(centroids):
   seed = cuda.threadIdx.x
 
   if centroids.ndim < 1: #ensure we are in-bounds
-    print("centroids.ndim<1!") #TODO: tanya's edit: added print statement
     return
 
   centroids_length = centroids.shape[0]
@@ -769,8 +721,7 @@ def largest_smallest_distance(line, centroids, iter):
   min = 0
   index = -1
 
-  if iter > centroids.shape[0]:#iter must be in range to execute rest of code
-    print("line 743 iter out of range")
+  if iter > centroids.shape[0]: #iter must be in range to execute rest of code
     return
 
   #our line is a single row from the original input array
@@ -791,51 +742,33 @@ def largest_smallest_distance(line, centroids, iter):
 #This function subtracts two values and returns an absolute value of the difference
 @cuda.jit(device=True)
 def abs_sub(val1, val2):
-  # diff = val2 - val1
-  # if diff >= 0:
-  #   return diff
-  # return -diff
-  #TODO: tanya's edit: replaced with built-in abs since it's supported by numba
-  return abs(val1-val2)
+  diff = val2 - val1
+  if diff >= 0:
+    return diff
+  return -diff
 
 @cuda.jit(device=True)
-def get_initial_centroids(row_data, seed_centroids, shared_offset, rng_states):
+def get_initial_centroids(row_data, seed_centroids, rng_states):
   #remember, seed_centroids is of size [NUM_CLUSTERS]
   row = cuda.blockIdx.x
   seed = cuda.threadIdx.x
 
   #check further references to shape will be in-bounds
-  # if row_data.ndim < 1 or seed_centroids.ndim < 1:
-  #   print("line 778 - row_data.ndim < 1 or seed_centroids.ndim < 1")
-  #   return
+  if row_data.ndim < 1 or seed_centroids.ndim < 1:
+    return
 
   row_length = row_data.shape[0]
   centroids_length = seed_centroids.shape[0]
 
-  cuda.atomic.add(shared_offset, 0, 1)
-
-  while shared_offset[0] < cuda.threadIdx.x:
-    pass
-
-  if (seed == 0):
-    for i in range(seed_centroids.shape[0]):
-      rand_index = rng_states[i]
-      #print("index:", i, "rand index:", rand_index)
-      seed_centroids[i] = row_data[rand_index]
-
   #select a first centroid from the row data at random
-  #first_centroid_index = get_random_index(row_data, shared_offset, rng_states)
+  first_centroid_index = get_random_index(row_data, rng_states)
 
   #get the furthest distance from the random centroid for remaining centroids
   for centroid_index in range(centroids_length):
     centroid = seed_centroids[centroid_index]
-    centroid = seed_centroids[centroid_index]
 
     if centroid_index == 0: #assign first centroid using random index
-      pass
-      #seed_centroids[centroid_index] = row_data[first_centroid_index]
-      #cuda.syncthreads()
-      #seed_centroids[centroid_index] = 0  #rng_states[seed]
+      seed_centroids[centroid_index] = row_data[first_centroid_index]
     else: #find furthest centroid
       largest_smallest_distance(row_data, seed_centroids, centroid_index)
 
@@ -934,19 +867,10 @@ def get_centroids(row_data, labels, centroids):
 #   return sse
 
 @cuda.jit(device=True)
-def kmeans(input, output_labels, output_centroids, shared_offset, rng_states): # these are already shared memory and a single row for each
-  row = cuda.blockIdx.x
+def kmeans(input, output_labels, output_centroids, rng_states): # these are already shared memory and a single row for each
   seed = cuda.threadIdx.x
 
-  # if row == 1 and seed == 1:
-  #   from pdb import set_trace
-  #   set_trace()
-  #if row == 1 and seed == 1:
-  # cuda.syncthreads()
-  # print("row=", row, " seed=", seed)
-  # print("centroids at start: ", output_centroids)
-  # print("labels at start: ", output_labels)
-  get_initial_centroids(input, output_centroids, shared_offset, rng_states)
+  get_initial_centroids(input, output_centroids, rng_states)
 
   sort_centroids(output_centroids)
 
@@ -966,13 +890,6 @@ def kmeans(input, output_labels, output_centroids, shared_offset, rng_states): #
 
     get_labels(output_labels, input, output_centroids)
     get_centroids(input, output_labels, output_centroids)
-    # cuda.syncthreads()
-    # print("row=", row, " seed=", seed)
-    # print("centroids at end: ", output_centroids)
-    # print("labels at end: ", output_labels)
-    # if row == 1 and seed == 1:
-    #  from pdb import set_trace
-    #  set_trace()
 
 @cuda.jit()
 def cuda_kmeans(input, output_labels, output_centroids, rng_states):
@@ -991,13 +908,12 @@ def cuda_kmeans(input, output_labels, output_centroids, rng_states):
   shared_error = cuda.shared.array(shape=(NUM_SEEDS,), dtype=np.float32)
   shared_centroids = cuda.shared.array(shape=(NUM_SEEDS, NUM_CLUSTERS), dtype=np.float32)
   shared_labels = cuda.shared.array(shape=(NUM_SEEDS, LINE_SIZE), dtype=np.int32)
-  shared_offset = cuda.shared.array(shape=(1,), dtype=np.int32)
 
   #Copy row data into shared memory
   fill_row(input[row], shared_input)
 
   #Run kmeans to convergence on row and seed
-  kmeans(shared_input, shared_labels[seed], shared_centroids[seed], shared_offset, rng_states)
+  kmeans(shared_input, shared_labels[seed], shared_centroids[seed], rng_states)
 
   #TODO: add error calculation back in
   #calc_error(shared_input, output_centroids, shared_error, output_labels)
@@ -1167,11 +1083,10 @@ def test_new_kmeans(input_data, new_code_stats, rng_states, printouts=True):
       device_centroids = cuda.to_device(centroids_array.copy())
       input_rows = cuda.to_device(input_data.copy())
       output_labels = cuda.to_device(labels_array.copy())
-      rng_device = cuda.to_device(np.array(rng_states, dtype=np.int32))
 
       # number of rows, number of seeds
       start = time.time()
-      cuda_kmeans[(NUM_ROWS, NUM_SEEDS)](input_rows, output_labels, device_centroids, rng_device)
+      cuda_kmeans[(NUM_ROWS, NUM_SEEDS)](input_rows, output_labels, device_centroids, rng_states)
       cuda.synchronize()
       end = time.time()
       new_code_stats.add_runtime(end - start)
@@ -1196,25 +1111,14 @@ if __name__ == "__main__":
 
   new_code_stats = TimingStats()
   # Create an array of RNG states
-  #rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS, seed=1)
+  rng_states = cuda.random.create_xoroshiro128p_states(NUM_SEEDS, seed=0)
 
-  #centroids_array = np.zeros((input_data.shape[0], NUM_CLUSTERS), dtype=np.float32)
-
-
-
-  #print("Randomly generated indicies:  ", rng_states)
+  print("random numbers. ", rng_states)
 
   for test_iteration in range(TEST_ITERATIONS):
 
     # Generate some fake input data
     input_data = np.random.rand(NUM_ROWS, LINE_SIZE).astype(np.float32) * MAX_INPUT_VALUE
-
-    rng_states = np.zeros((NUM_SEEDS,), dtype=np.int64)
-    for seed_index in range(rng_states.shape[0] - 1):
-      temp_index = randint(0, LINE_SIZE - 1) #generate a random index on line
-      rng_states[seed_index] = temp_index
-
-    print("Randomly generated indices:  ", rng_states)
 
     labels, centroids_arr = test_new_kmeans(input_data, new_code_stats,
                                             rng_states, True)
